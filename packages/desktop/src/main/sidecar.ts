@@ -26,6 +26,9 @@ type SidecarMessage =
   | { type: "stopped" }
   | { type: "error"; error: { message: string; stack?: string } }
 
+const rawChannel = import.meta.env.OPENCODE_CHANNEL
+const channel = rawChannel === "dev" || rawChannel === "beta" || rawChannel === "prod" ? rawChannel : "dev"
+
 type ParentPort = {
   postMessage(message: SidecarMessage): void
   on(event: "message", listener: (event: { data: unknown }) => void): void
@@ -55,7 +58,7 @@ async function start(command: StartCommand) {
     useSystemCertificates()
     useEnvProxy()
     const { Log, Server } = await import("virtual:opencode-server")
-    await Log.init({ level: "WARN" })
+    await Log.init({ dev: channel === "dev", level: channel === "prod" ? "WARN" : "INFO", print: false })
 
     listener = await Server.listen({
       port: command.port,
