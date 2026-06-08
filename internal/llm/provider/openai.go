@@ -6,6 +6,9 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net/http"
+	"strings"
+	"sync/atomic"
 	"time"
 
 	"github.com/openai/openai-go"
@@ -31,6 +34,7 @@ type openaiClient struct {
 	providerOptions providerClientOptions
 	options         openaiOptions
 	client          openai.Client
+	apiKeys         []string
 }
 
 type OpenAIClient ProviderClient
@@ -43,9 +47,27 @@ func newOpenAIClient(opts providerClientOptions) OpenAIClient {
 		o(&openaiOpts)
 	}
 
-	openaiClientOptions := []option.RequestOption{}
+	// Split comma-separated apiKey for round-robin
+	var apiKeys []string
 	if opts.apiKey != "" {
-		openaiClientOptions = append(openaiClientOptions, option.WithAPIKey(opts.apiKey))
+		for _, k := range strings.Split(opts.apiKey, ",") {
+			k = strings.TrimSpace(k)
+			if k != "" {
+				apiKeys = append(apiKeys, k)
+			}
+		}
+	}
+
+	// Use first key for initial client creation, but dynamic key interceptor
+	// will override it on every request
+	var apiKey string
+	if len(apiKeys) > 0 {
+		apiKey = apiKeys[0]
+	}
+
+	openaiClientOptions := []option.RequestOption{}
+	if apiKey != "" {
+		openaiClientOptions = append(openaiClientOptions, option.WithAPIKey(apiKey))
 	}
 	if openaiOpts.baseURL != "" {
 		openaiClientOptions = append(openaiClientOptions, option.WithBaseURL(openaiOpts.baseURL))
@@ -57,12 +79,32 @@ func newOpenAIClient(opts providerClientOptions) OpenAIClient {
 		}
 	}
 
+	// Round-robin interceptor: override Authorization header on every request
+	if len(apiKeys) > 1 {
+		openaiClientOptions = append(openaiClientOptions, roundRobinAPIKeyInterceptor(apiKeys))
+	}
+
 	client := openai.NewClient(openaiClientOptions...)
 	return &openaiClient{
 		providerOptions: opts,
 		options:         openaiOpts,
 		client:          client,
+		apiKeys:         apiKeys,
 	}
+}
+
+// roundRobinAPIKeyInterceptor returns an option.RequestOption that overrides
+// the API key on every HTTP request using round-robin selection.
+// Uses sync/atomic for thread-safe counter across concurrent requests.
+func roundRobinAPIKeyInterceptor(apiKeys []string) option.RequestOption {
+	var idx uint64
+	return option.NewFunc(func(r *http.Request) {
+		i := atomic.AddUint64(&idx, 1)
+		key := apiKeys[i%uint64(len(apiKeys))-1]
+		if key != "" {
+			r.Header.Set("Authorization", "Bearer "+key)
+		}
+	})
 }
 
 func (o *openaiClient) convertMessages(messages []message.Message) (openaiMessages []openai.ChatCompletionMessageParamUnion) {

@@ -726,7 +726,7 @@ func createAgentProvider(agentName config.AgentName) (provider.Provider, error) 
 		maxTokens = agentConfig.MaxTokens
 	}
 	opts := []provider.ProviderClientOption{
-		provider.WithAPIKey(providerCfg.APIKey),
+		provider.WithAPIKey(strings.TrimSpace(providerCfg.APIKey)),
 		provider.WithModel(model),
 		provider.WithSystemMessage(prompt.GetAgentPrompt(agentName, model.Provider)),
 		provider.WithMaxTokens(maxTokens),
